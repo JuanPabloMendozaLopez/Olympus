@@ -3,26 +3,45 @@
     // ---------- Requests ----------
     public class RecommendationRequest
     {
-        public string CompanyType { get; set; } = "hotel";
-        public string CompanyName { get; set; } = "";
-        public double MonthlyConsumptionKwh { get; set; }   // consumo declarado
-        public int? CompanySize { get; set; }                // habitaciones / m² / empleados
-        public string? PeakUsageHours { get; set; }          // ej "18:00-22:00"
+        // Discriminador: "company" o "community"
+        public string TargetType { get; set; } = "company";
+
+        // Común a ambos modos
+        public string Name { get; set; } = "";
+
+        // --- Solo modo "company" ---
+        public string? CompanyType { get; set; }            // hotel, hielera, retail, restaurante
+        public double? MonthlyConsumptionKwh { get; set; }
+        public int? CompanySize { get; set; }
+        public string? PeakUsageHours { get; set; }
+        public List<string>? MainLoads { get; set; }
+
+        // --- Solo modo "community" ---
+        public int? PopulationEstimate { get; set; }
+        public List<string>? MainProblems { get; set; }
     }
 
     public class ChatRequest
     {
         public string Message { get; set; } = "";
-        public string CompanyType { get; set; } = "hotel";
-        public double MonthlyConsumptionKwh { get; set; }    // mismo perfil
+        public string TargetType { get; set; } = "company";
+        public string Name { get; set; } = "";
+
+        // Opcionales de company
+        public string? CompanyType { get; set; }
+        public double? MonthlyConsumptionKwh { get; set; }
         public int? CompanySize { get; set; }
+        public List<string>? MainLoads { get; set; }
+
+        // Opcionales de community
+        public int? PopulationEstimate { get; set; }
     }
 
     // ---------- Responses ----------
     public class RecommendationResult
     {
-        public string CompanyName { get; set; } = "";
-        public string CompanyType { get; set; } = "";
+        public string TargetType { get; set; } = "";
+        public string Name { get; set; } = "";
         public DateTime Date { get; set; }
         public double RadiationToday { get; set; }
         public int SolarIndex { get; set; }
