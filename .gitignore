@@ -1,0 +1,50 @@
+## .NET / ASP.NET Core
+
+# Build outputs
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Rider
+.idea/
+
+# Visual Studio
+.vs/
+*.rsuser
+*.vsp
+*.vspx
+
+# Test results
+TestResults/
+[Tt]est[Rr]esult*/
+
+# Publish profiles
+**/Properties/PublishProfiles/
+
+# Secrets (keep out of source control)
+appsettings.Development.json
+appsettings.*.json
+!appsettings.json
+
+# dotenv
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
