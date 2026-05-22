@@ -1,0 +1,3 @@
+[submodule "solar-ai"]
+	path = solar-ai
+	url = https://github.com/kyr3-fxp/solar-ai.git
