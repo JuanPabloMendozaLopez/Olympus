@@ -8,9 +8,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Servicios de la app
 builder.Services.AddSingleton<SolarIndexService>();
 builder.Services.AddScoped<SolarService>();
-builder.Services.AddScoped<GroqService>();
+builder.Services.AddScoped<AiService>();
 
-// HttpClient (necesario para SolarService y GroqService)
+// HttpClient (necesario para SolarService y AiService)
 builder.Services.AddHttpClient();
 
 // CORS para frontend y móvil
