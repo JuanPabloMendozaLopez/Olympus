@@ -44,7 +44,7 @@ namespace Olympus.Services
                         new { role = "system", content = systemPrompt },
                         new { role = "user", content = userPrompt }
                     },
-                    temperature = 0.6,
+                    temperature = 0.25,
                     response_format = new { type = "json_object" }
                 }
                 : new
