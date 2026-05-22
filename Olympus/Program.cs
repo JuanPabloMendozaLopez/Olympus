@@ -41,7 +41,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowAll");
 
-app.UseHttpsRedirection();
+// Solo redirigir a HTTPS en producción; en desarrollo la API escucha en HTTP
+// para que compañeros en la red local puedan conectarse sin certificado.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAuthorization();
 
