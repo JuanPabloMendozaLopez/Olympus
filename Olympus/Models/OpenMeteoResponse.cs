@@ -8,6 +8,16 @@ namespace Olympus.Models
         public double Longitude { get; set; }
         public string Timezone { get; set; } = "";
         public DailyData? Daily { get; set; }
+        public HourlyData? Hourly { get; set; }
+    }
+
+    public class HourlyData
+    {
+        [JsonPropertyName("time")]
+        public List<string> Time { get; set; } = new();
+
+        [JsonPropertyName("shortwave_radiation")]
+        public List<double> ShortwaveRadiation { get; set; } = new();
     }
 
     public class DailyData
