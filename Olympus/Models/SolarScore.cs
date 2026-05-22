@@ -1,4 +1,4 @@
-﻿namespace Olympus.Models
+namespace Olympus.Models
 {
     public class SolarScore
     {
@@ -7,5 +7,9 @@
         public string Color { get; set; } = "";
         public string Summary { get; set; } = "";
         public double RadiationKwhM2 { get; set; }
+
+        // Comparativa histórica (NASA POWER 90 días)
+        public double HistoricalAvgKwhM2 { get; set; }
+        public double VsHistoricalPct { get; set; }
     }
 }
