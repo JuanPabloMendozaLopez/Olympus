@@ -9,10 +9,10 @@ namespace Olympus.Controllers
     [ApiController]
     public class AiController : ControllerBase
     {
-        private readonly GroqService _groq;
+        private readonly AiService _groq;
         private readonly SolarService _solar;
 
-        public AiController(GroqService groq, SolarService solar)
+        public AiController(AiService groq, SolarService solar)
         {
             _groq = groq;
             _solar = solar;
