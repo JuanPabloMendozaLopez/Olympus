@@ -148,9 +148,19 @@ namespace Olympus.Controllers
         {
             try
             {
-                var today = await _solar.GetTodayAsync();
+                // Paralelo: datos de hoy + promedio histórico 90 días NASA POWER
+                var todayTask = _solar.GetTodayAsync();
+                var avgTask = _solar.GetHistoricalAverageAsync(90);
+                await Task.WhenAll(todayTask, avgTask);
+
+                var today = await todayTask;
                 if (today == null)
                     return StatusCode(503, new { success = false, error = "Sin datos disponibles" });
+
+                var historicalAvg = await avgTask;
+                var vsHistPct = historicalAvg > 0
+                    ? Math.Round((today.RadiationKwhM2 - historicalAvg) / historicalAvg * 100, 1)
+                    : 0.0;
 
                 var score = new SolarScore
                 {
@@ -158,7 +168,9 @@ namespace Olympus.Controllers
                     Label = today.SolarIndexLabel,
                     Color = today.SolarIndexColor,
                     Summary = _solarIndex.GetSummary(today.SolarIndex, today.RadiationKwhM2),
-                    RadiationKwhM2 = today.RadiationKwhM2
+                    RadiationKwhM2 = today.RadiationKwhM2,
+                    HistoricalAvgKwhM2 = historicalAvg,
+                    VsHistoricalPct = vsHistPct
                 };
 
                 return Ok(new { success = true, data = score });
