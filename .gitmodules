@@ -1,3 +1,6 @@
 [submodule "solar-ai"]
 	path = solar-ai
 	url = https://github.com/kyr3-fxp/solar-ai.git
+[submodule "app-movil"]
+	path = app-movil
+	url = https://github.com/angel127633/AppSolarMovil.git
