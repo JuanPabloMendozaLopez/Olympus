@@ -38,30 +38,31 @@
 ### Arquitectura general
 
 ```
-┌─────────────────────────────────────┐
-│         FRONTEND (Laravel)          │
-│   Blade + Tailwind CSS + JS         │
-│   Puerto: 8000                      │
-└────────────┬────────────────────────┘
-             │ HTTP/JSON
-             ▼
-┌─────────────────────────────────────┐
-│         BACKEND (ASP.NET Core 10)   │
-│   SolarController  │  AiController  │
-│   Puerto: 5016 (HTTP dev)           │
-└──────┬──────────────────┬───────────┘
-       │                  │
-       ▼                  ▼
-┌──────────────┐  ┌───────────────────┐
-│  Open-Meteo  │  │    Groq API       │
-│  (Forecast)  │  │  LLaMA 3.3 70B   │
-└──────────────┘  └───────────────────┘
-       │
-       ▼
-┌──────────────┐
-│  NASA POWER  │
-│  (Historia)  │
-└──────────────┘
+┌──────────────────────┐  ┌──────────────────────┐
+│   FRONTEND WEB       │  │   APP MÓVIL (Android) │
+│   Laravel + Blade    │  │   Kotlin + Compose    │
+│   Puerto: 8000       │  │   Retrofit 2 + OkHttp │
+└──────────┬───────────┘  └──────────┬────────────┘
+           │ HTTP/JSON               │ HTTP/JSON
+           └─────────────┬───────────┘
+                         ▼
+           ┌─────────────────────────────┐
+           │     BACKEND (ASP.NET Core 10)│
+           │  SolarController │ AiController│
+           │  Puerto: 5016 (HTTP dev)     │
+           └──────┬──────────────┬────────┘
+                  │              │
+                  ▼              ▼
+        ┌──────────────┐  ┌──────────────────┐
+        │  Open-Meteo  │  │    Groq API       │
+        │  (Forecast)  │  │  LLaMA 3.3 70B   │
+        └──────────────┘  │  10 claves rot.  │
+               │          └──────────────────┘
+               ▼
+        ┌──────────────┐
+        │  NASA POWER  │
+        │  (Historia)  │
+        └──────────────┘
 ```
 
 ### Flujo completo de una llamada de IA
@@ -113,7 +114,7 @@ Olympus/
 │   └── AiController.cs         # Endpoints /api/ai/*
 ├── Services/
 │   ├── SolarService.cs         # Integración Open-Meteo + NASA POWER
-│   ├── GroqService.cs          # Cliente HTTP hacia la API de Groq
+│   ├── AiService.cs            # Cliente HTTP hacia Groq con rotación de claves
 │   └── SolarIndexService.cs    # Cálculo del Índice Solar (fórmula propia)
 ├── Models/
 │   ├── SolarData.cs            # Datos del día actual
@@ -155,8 +156,8 @@ solar-ai/
     }
   },
   "AllowedHosts": "*",
-  "Groq": {
-    "KEY": "YOUR_GROQ_API_KEY_HERE",
+  "Ai": {
+    "KEYS": [ "YOUR_GROQ_API_KEY_HERE" ],
     "MODEL": "llama-3.3-70b-versatile",
     "URL": "https://api.groq.com/openai/v1/chat/completions"
   }
@@ -167,15 +168,21 @@ solar-ai/
 
 ```json
 {
-  "Groq": {
-    "KEY": "gsk_****************************",
+  "Ai": {
+    "KEYS": [
+      "gsk_clave_1",
+      "gsk_clave_2",
+      "gsk_clave_N"
+    ],
     "MODEL": "llama-3.3-70b-versatile",
     "URL": "https://api.groq.com/openai/v1/chat/completions"
   }
 }
 ```
 
-> ⚠ **`appsettings.Development.json` nunca debe subirse a repositorios públicos.** Añadir a `.gitignore`.
+> ⚠ **`appsettings.Development.json` nunca debe subirse a repositorios públicos.** Está en `.gitignore`.
+>
+> El campo `KEYS` acepta un array de claves. `AiService` las itera automáticamente: si una devuelve HTTP 429 (cuota agotada), pasa a la siguiente. Con 10 claves el límite efectivo se multiplica × 10.
 
 ### `.env` — Frontend
 
@@ -958,15 +965,22 @@ roi_25 = ((ahorro_anual × 25 - inversion) / inversion) × 100
 | Temperature (JSON) | 0.25 (baja: respuestas deterministas) |
 | Temperature (chat) | 0.7 (moderada: respuestas conversacionales) |
 | Modo JSON | `response_format: { type: "json_object" }` |
+| Claves | Array `Ai:KEYS` — rotación automática en 429 |
 
 ### Arquitectura de la integración
 
 ```
-GroqService
+AiService
 ├── AskJsonAsync(system, user)  → response_format: json_object, temp: 0.25
 │   Usado por: recommendations, insights, alerts
 └── AskTextAsync(system, user)  → sin format, temp: 0.7
     Usado por: chat
+
+Rotación de claves:
+foreach (key in KEYS)
+  → si HTTP 429: continuar con siguiente clave
+  → si éxito: retornar respuesta
+  → si todas agotadas: lanzar excepción
 ```
 
 ### System Prompt — Agente Solar
@@ -1168,7 +1182,7 @@ var diasValidos = data.Properties.Parameter.ALLSKY_SFC_SW_DWN
 | URL | `https://api.groq.com/openai/v1/chat/completions` |
 | Modelo | `llama-3.3-70b-versatile` |
 | Autenticación | `Bearer {GROQ_API_KEY}` en header |
-| Rate limit | Varía según tier; tier gratuito: 30 req/min |
+| Rate limit | Tier gratuito: 30 req/min, 6.000 TPM, 14.400 req/día por clave |
 | Latencia típica | 500–1500 ms |
 
 **Request body para modo JSON:**
@@ -1201,12 +1215,12 @@ var text = doc.RootElement
 
 | Clave | Almacenamiento | Exposición |
 |---|---|---|
-| `Groq:KEY` | `appsettings.Development.json` | Solo local. Nunca en `appsettings.json` (repo público). |
+| `Ai:KEYS` (array) | `appsettings.Development.json` | Solo local. Nunca en `appsettings.json` (repo público). |
 | `APP_KEY` (Laravel) | `.env` | Solo en servidor. Nunca en código. |
 
 **Recomendaciones para producción:**
 - Usar Azure Key Vault / AWS Secrets Manager / variables de entorno del servidor.
-- Rotar la clave Groq periódicamente.
+- Rotar las claves Groq periódicamente.
 - Añadir `appsettings.Development.json` y `.env` al `.gitignore`.
 
 ### CORS
@@ -1255,6 +1269,56 @@ Todos los errores siguen el formato:
 ---
 
 ## 8. Integración con frontend y mobile
+
+### App móvil — AppSolarMovil (Android)
+
+Repositorio: [`angel127633/AppSolarMovil`](https://github.com/angel127633/AppSolarMovil)
+
+La app Android consume los mismos endpoints REST que el frontend web. Está construida en **Kotlin + Jetpack Compose** con arquitectura MVVM.
+
+**Configuración de la URL base** (`RetrofitClient.kt`):
+```kotlin
+Retrofit.Builder()
+    .baseUrl("http://<IP_LOCAL>:5016/api/")  // IP de la máquina que corre el backend
+    .addConverterFactory(GsonConverterFactory.create())
+    .client(OkHttpClient.Builder()
+        .connectTimeout(40, TimeUnit.SECONDS)
+        .readTimeout(40, TimeUnit.SECONDS)
+        .writeTimeout(40, TimeUnit.SECONDS)
+        .build())
+    .build()
+    .create(ApiService::class.java)
+```
+
+> Usar la IP local de la red (ej. `192.168.1.X`), no `localhost`, para que el dispositivo físico o emulador pueda alcanzar el backend. El manifesto tiene `android:usesCleartextTraffic="true"` habilitado para desarrollo HTTP.
+
+**Endpoints consumidos por la app:**
+
+| Método | Endpoint | ViewModel | Pantalla |
+|--------|----------|-----------|---------|
+| `GET` | `/solar/today` | `SolarViewModel` | Dashboard |
+| `GET` | `/solar/score` | `SolarViewModel` | Dashboard |
+| `GET` | `/solar/forecast?days=16` | `ForecastViewModel` | Dashboard |
+| `POST` | `/ai/recommendations` | `ViewModelRecomendations` | Dashboard |
+| `POST` | `/ai/chat` | `ChatIAViewModel` | Chat IA |
+
+**Pantallas:**
+
+| Tab | Pantalla | Descripción |
+|-----|----------|-------------|
+| 0 | `DashBoardScreen` | Índice solar, radiación, UV, temperatura, pronóstico y recomendaciones IA |
+| 1 | `ChaIAScreen` | Chat conversacional con el asistente energético |
+
+**Indicador solar (igual que el backend):**
+
+| Rango | Etiqueta | Color |
+|-------|----------|-------|
+| 0–30 | Bajo | Rojo |
+| 31–60 | Medio | Amarillo |
+| 61–80 | Alto | Verde |
+| 81–100 | Excelente | Verde brillante |
+
+---
 
 ### Mapa de endpoints por widget del Dashboard
 
@@ -1380,7 +1444,7 @@ Presentation Layer
 Business Layer
 └── Services
     ├── SolarService      — integración APIs externas, transformación de datos
-    ├── GroqService        — cliente HTTP para Groq, modo JSON vs. texto
+    ├── AiService          — cliente HTTP para Groq con rotación de claves
     └── SolarIndexService  — lógica del Índice Solar (singleton, sin estado)
 
 Data Layer (externo)
@@ -1395,7 +1459,7 @@ Data Layer (externo)
 |---|---|---|
 | `SolarIndexService` | `Singleton` | Solo contiene fórmulas matemáticas sin estado |
 | `SolarService` | `Scoped` | Una instancia por request HTTP |
-| `GroqService` | `Scoped` | Una instancia por request HTTP |
+| `AiService` | `Scoped` | Una instancia por request HTTP |
 | `HttpClient` | Factory (`AddHttpClient`) | Gestión del pool de conexiones TCP |
 
 ### Índice Solar — Fórmula propia
