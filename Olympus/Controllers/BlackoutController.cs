@@ -57,10 +57,15 @@ namespace Olympus.Controllers
                     ? req.CriticalLoads
                     : defaultLoads.Keep;
 
+                // 3b. Calcular impacto económico por hora
+                double dailyKwh2     = req.MonthlyConsumptionKwh > 0 ? req.MonthlyConsumptionKwh / 30.0 : 400.0;
+                double criticalKw2   = Math.Max(1.0, (dailyKwh2 / 24.0) * 0.25);
+                double lossPerHourCop = criticalKw2 * (req.TariffCopKwh > 0 ? req.TariffCopKwh : 1050);
+
                 // 4. Construir contexto para la IA
                 var systemPrompt = BuildBlackoutSystemPrompt();
                 var userPrompt   = BuildBlackoutUserPrompt(
-                    req, profileType, radiationNow, today, autonomyMin, urgency, defaultLoads);
+                    req, profileType, radiationNow, today, autonomyMin, urgency, lossPerHourCop, defaultLoads);
 
                 // 5. Llamar IA — con fallback offline si falla
                 BlackoutResponse response;
@@ -71,6 +76,13 @@ namespace Olympus.Controllers
 
                     if (parsed != null)
                     {
+                        // Post-procesar: si la IA dejó secciones vacías, usar los defaults
+                        if (!parsed.PriorityMatrix.Reduce.Any())
+                            parsed.PriorityMatrix.Reduce = new List<string>(defaultLoads.Reduce);
+                        if (!parsed.PriorityMatrix.Disconnect.Any())
+                            parsed.PriorityMatrix.Disconnect = new List<string>(defaultLoads.Disconnect);
+                        if (!parsed.PriorityMatrix.Keep.Any())
+                            parsed.PriorityMatrix.Keep = new List<string>(defaultLoads.Keep);
                         response = parsed;
                     }
                     else
@@ -90,6 +102,10 @@ namespace Olympus.Controllers
                 response.EstimatedAutonomyMinutes  = autonomyMin;
                 response.UrgencyLevel              = urgency;
                 response.CurrentRadiationKwhM2     = radiationNow;
+                response.LossPerHourCop            = Math.Round(lossPerHourCop, 0);
+                response.ElapsedLossCop            = Math.Round(lossPerHourCop * req.OutageMinutes / 60.0, 0);
+                response.ProfileType               = profileType;
+                response.ProfileName               = req.Name;
                 response.GeneratedAt               = DateTime.Now;
                 response.StatusMessage             = BuildStatusMessage(
                     req.OutageMinutes,
@@ -175,21 +191,30 @@ PRINCIPIOS DEL MODO APAGÓN:
 4. Preparar la recuperación para cuando vuelva la energía.
 
 REGLAS POR TIPO DE NEGOCIO:
-- hotel: seguridad de huéspedes, cerraduras, recepción, neveras cocina, agua, comunicación. El huésped no puede quedarse sin estas cosas.
-- hielera: cada minuto cuenta. La temperatura interna es el único indicador. NO abrir puertas. Proteger el inventario como prioridad absoluta. Si el inventario se pierde, el negocio pierde el día.
-- restaurant: las cámaras frigoríficas son prioridad 1. El POS es prioridad 2. El resto puede esperar.
-- community: agua potable, comunicación de emergencia, población vulnerable (adultos mayores, hospitales, bombas de agua).
+- hotel: seguridad de huéspedes, cerraduras, recepción, neveras cocina, agua, comunicación.
+- hielera: cada minuto cuenta. La temperatura interna es el único indicador. NO abrir puertas. Inventario = ingreso del día.
+- restaurant: cámaras frigoríficas prioridad 1. POS prioridad 2. Cocina caliente puede esperar.
+- community: agua potable, comunicación de emergencia, adultos mayores, hospitales, bombas.
 
-FORMATO DE RESPUESTA (JSON estricto, sin texto adicional):
+REGLAS ABSOLUTAS DEL JSON — INCUMPLIRLAS INVALIDA TU RESPUESTA:
+1. ""keep"": OBLIGATORIO entre 4 y 5 elementos — equipos que JAMÁS se apagan bajo ninguna circunstancia
+2. ""reduce"": OBLIGATORIO entre 2 y 4 elementos — equipos que SÍ pueden funcionar a menor potencia, con la acción concreta entre guiones (p.ej. ""A/C del salón — subir de 22°C a 26°C"", ""Iluminación de pasillos — bajar al 50%"")
+3. ""disconnect"": OBLIGATORIO entre 3 y 6 elementos — cargas prescindibles que se desconectan AHORA para preservar energía y autonomía
+4. NINGUNA lista puede estar vacía ni tener menos elementos de los indicados
+5. ""instructions"": exactamente 3 oraciones directas, específicas al tipo de negocio. Sin frases genéricas.
+6. ""critical_alert"": 1 sola oración de máxima urgencia, concreta y específica para el tipo de negocio dado.
+7. ""recovery_actions"": exactamente 4 pasos secuenciales y ordenados para cuando vuelva la luz.
+
+FORMATO DE RESPUESTA (JSON estricto, sin texto adicional, sin bloques ```):
 {
   ""priority_matrix"": {
-    ""keep"": [""carga 1"", ""carga 2""],
-    ""reduce"": [""carga 3 — acción específica""],
-    ""disconnect"": [""carga 4"", ""carga 5""]
+    ""keep"":       [""carga 1"", ""carga 2"", ""carga 3"", ""carga 4""],
+    ""reduce"":     [""carga X — acción concreta con nivel o temperatura"", ""carga Y — reducción al Z%""],
+    ""disconnect"": [""carga A"", ""carga B"", ""carga C"", ""carga D""]
   },
-  ""instructions"": ""Párrafo de 2-3 oraciones con las acciones más urgentes. Sé directo y específico para este tipo de negocio."",
-  ""critical_alert"": ""La UNA cosa más urgente que deben hacer AHORA MISMO. Máximo 1 oración."",
-  ""recovery_actions"": [""Acción 1 al volver la luz"", ""Acción 2"", ""Acción 3""]
+  ""instructions"": ""Oración urgente específica al negocio. Oración con dato concreto (tiempo, temperatura, porcentaje). Oración de preparación para la recuperación."",
+  ""critical_alert"": ""La acción más urgente y concreta para este tipo de negocio ahora mismo."",
+  ""recovery_actions"": [""Paso 1"", ""Paso 2 — espera X min"", ""Paso 3 — verifica Y"", ""Paso 4 — registra Z""]
 }
 
 NUNCA menciones tarifas, COP ni ahorros. Eso no importa durante un apagón.
@@ -202,52 +227,60 @@ NUNCA respondas temas ajenos a la gestión del apagón.";
             SolarData? today,
             int autonomyMin,
             string urgency,
+            double lossPerHourCop,
             (List<string> Keep, List<string> Reduce, List<string> Disconnect) defaultLoads)
         {
-            var loadsStr = req.CriticalLoads.Any()
-                ? string.Join(", ", req.CriticalLoads)
-                : string.Join(", ", defaultLoads.Keep.Take(4));
-
             var solarCtx = radiation > 0
-                ? $"Radiación solar ahora: {radiation} kWh/m² — los paneles {(req.HasSolarPanels ? "están generando energía" : "no están instalados")}."
+                ? $"Radiación solar ahora: {radiation:F2} kWh/m² — paneles {(req.HasSolarPanels ? "SÍ instalados y generando" : "no instalados")}."
                 : "Sin datos de radiación disponibles.";
 
             var batteryCtx = req.HasBattery && req.BatteryCapacityKwh > 0
-                ? $"Batería/UPS disponible: {req.BatteryCapacityKwh} kWh."
-                : "Sin batería de respaldo.";
+                ? $"Batería/UPS disponible: {req.BatteryCapacityKwh} kWh instalados."
+                : "Sin batería ni UPS de respaldo.";
 
             var autonomyCtx = autonomyMin > 0
-                ? $"Autonomía estimada del sistema: {autonomyMin / 60}h {autonomyMin % 60}min."
-                : "Dependencia total de la red — sin recursos energéticos propios.";
+                ? $"Autonomía estimada del sistema: {autonomyMin / 60}h {autonomyMin % 60}min con la carga crítica actual."
+                : "Sin recursos propios — dependencia total de la red eléctrica.";
 
             var urgencyLabel = urgency switch
             {
                 "critical" => "CRÍTICA — actúa ahora sin esperar",
-                "high"     => "ALTA — prioriza las acciones de desconexión",
-                "moderate" => "MODERADA — gestiona cargas con calma",
-                _          => "BAJA — mantén el monitoreo"
+                "high"     => "ALTA — prioriza desconexiones inmediatas",
+                "moderate" => "MODERADA — gestiona cargas con calma pero sin dilación",
+                _          => "BAJA — mantén monitoreo y prepara protocolo"
             };
 
             var tempCtx = today != null
-                ? $"Temperatura exterior: {today.TemperatureC}°C."
+                ? $"Temperatura exterior: {today.TemperatureC}°C (afecta refrigeración y A/C)."
                 : "";
 
-            return $@"MODO APAGÓN ACTIVO para: {req.Name} (tipo: {profileType})
+            var keepStr       = string.Join(" | ", defaultLoads.Keep);
+            var reduceStr     = string.Join(" | ", defaultLoads.Reduce);
+            var disconnectStr = string.Join(" | ", defaultLoads.Disconnect);
+
+            return $@"MODO APAGÓN ACTIVO para: {req.Name} (tipo de negocio: {profileType})
 
 ESTADO DEL APAGÓN:
-- Duración actual: {req.OutageMinutes} minutos
-- Promedio histórico La Guajira: {BlackoutHistoryService.AvgOutageMinutes} minutos (1h 41min)
-- Nivel de urgencia: {urgencyLabel}
+- Duración actual del apagón: {req.OutageMinutes} minutos transcurridos
+- Promedio histórico La Guajira (SAIDI/SAIFI): {BlackoutHistoryService.AvgOutageMinutes} min (1h 41min)
+- Nivel de urgencia calculado: {urgencyLabel}
 - {solarCtx}
 - {batteryCtx}
 - {autonomyCtx}
 - {tempCtx}
 
-CARGAS DECLARADAS POR EL USUARIO:
-{loadsStr}
+IMPACTO ECONÓMICO ESTIMADO:
+- Consumo mensual: {req.MonthlyConsumptionKwh} kWh/mes · tarifa: {req.TariffCopKwh} COP/kWh
+- Pérdida estimada por hora (carga crítica 25%): ${lossPerHourCop:N0} COP/hora
 
-Genera el plan de supervivencia para este apagón. Instrucciones específicas para {profileType}.
-Responde SOLO con el JSON en el formato indicado.";
+CARGAS DE REFERENCIA PARA ESTE TIPO DE NEGOCIO (usa estas o equivalentes específicas):
+- MANTENER ENCENDIDO: {keepStr}
+- REDUCIR AL MÍNIMO: {reduceStr}
+- DESCONECTAR AHORA: {disconnectStr}
+
+INSTRUCCIONES: Genera el plan de supervivencia. Ajusta las cargas al contexto exacto de un {profileType} durante un apagón en La Guajira con {radiation:F1} kWh/m² de radiación ahora.
+RECUERDA: ""reduce"" y ""disconnect"" son OBLIGATORIOS con 2+ items cada uno.
+Responde ÚNICAMENTE con el JSON, sin texto adicional, sin bloques de código markdown.";
         }
 
         private static BlackoutResponse? ParseBlackoutResponse(string raw)

@@ -44,6 +44,12 @@ namespace Olympus.Models
         public string UrgencyLevel            { get; set; } = "low"; // low | moderate | high | critical
         public double CurrentRadiationKwhM2   { get; set; }
 
+        // Impacto económico del apagón
+        public double LossPerHourCop  { get; set; }  // COP/hora estimados de pérdida (carga crítica)
+        public double ElapsedLossCop  { get; set; }  // COP perdidos hasta el momento
+        public string ProfileType     { get; set; } = "";  // hotel | hielera | restaurant | community
+        public string ProfileName     { get; set; } = "";  // nombre del negocio
+
         public BlackoutPriorityMatrix PriorityMatrix { get; set; } = new();
 
         public string   Instructions    { get; set; } = "";  // párrafo IA contextual
