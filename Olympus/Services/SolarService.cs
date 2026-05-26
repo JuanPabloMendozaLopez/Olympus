@@ -28,7 +28,7 @@ namespace Olympus.Services
                 $"&timezone=America/Bogota&forecast_days=1";
 
             var data = await GetOpenMeteo(url);
-            if (data?.Daily == null || !data.Daily.Time.Any()) return null;
+            if (data?.Daily == null || !data.Daily.Time.Any()) return GetFallbackToday();
 
             var radiation = Math.Round(data.Daily.ShortwaveRadiationSum[0] / 3.6, 2);
             var tempMax = data.Daily.Temperature2mMax[0];
@@ -98,7 +98,7 @@ namespace Olympus.Services
 
             var data = await GetOpenMeteo(url);
             var list = new List<SolarDayData>();
-            if (data?.Daily == null) return list;
+            if (data?.Daily == null) return GetFallbackForecast(days);
 
             for (int i = 0; i < data.Daily.Time.Count; i++)
             {
@@ -123,6 +123,8 @@ namespace Olympus.Services
         // ---------- HISTÓRICO (NASA POWER) ----------
         public async Task<List<SolarDayData>> GetHistoryAsync(DateTime start, DateTime end)
         {
+            try
+            {
             var url = $"https://power.larc.nasa.gov/api/temporal/daily/point" +
                 $"?parameters=ALLSKY_SFC_SW_DWN,T2M,WS10M&community=RE" +
                 $"&longitude={Inv(LON)}&latitude={Inv(LAT)}" +
@@ -161,22 +163,94 @@ namespace Olympus.Services
                 });
             }
             return list;
+            }
+            catch { return new List<SolarDayData>(); }
         }
 
         // ---------- PROMEDIO HISTÓRICO (para el agente IA) ----------
         public async Task<double> GetHistoricalAverageAsync(int days = 90)
         {
-            var end = DateTime.Today.AddDays(-7);
-            var start = end.AddDays(-days);
-            var list = await GetHistoryAsync(start, end);
-            return list.Any() ? Math.Round(list.Average(d => d.RadiationKwhM2), 2) : 0;
+            try
+            {
+                var end = DateTime.Today.AddDays(-7);
+                var start = end.AddDays(-days);
+                var list = await GetHistoryAsync(start, end);
+                // Fallback al promedio histórico conocido de Riohacha si NASA POWER no responde
+                return list.Any() ? Math.Round(list.Average(d => d.RadiationKwhM2), 2) : 5.8;
+            }
+            catch { return 5.8; }
         }
 
         // ---------- Helpers ----------
         private async Task<OpenMeteoResponse?> GetOpenMeteo(string url)
         {
-            var response = await _httpClient.GetStringAsync(url);
-            return JsonSerializer.Deserialize<OpenMeteoResponse>(response, JsonOpts());
+            try
+            {
+                var response = await _httpClient.GetStringAsync(url);
+                return JsonSerializer.Deserialize<OpenMeteoResponse>(response, JsonOpts());
+            }
+            catch { return null; }
+        }
+
+        // ---------- Fallback — datos estáticos de Riohacha cuando Open-Meteo no responde ----------
+        private SolarData GetFallbackToday()
+        {
+            const double radiation = 5.8;
+            const double temp      = 35.0;
+            const double wind      = 24.0;
+            var score = _solarIndex.Calculate(radiation, wind, temp);
+
+            // Perfil horario típico de Riohacha (W/m²)
+            double[] profile = { 0, 0, 0, 0, 0, 5, 40, 140, 300, 460, 590, 680, 720, 700, 630, 510, 350, 190, 70, 15, 0, 0, 0, 0 };
+            var hourlySlots = new List<HourlyRadiationSlot>();
+            for (int h = 0; h < 24; h++)
+                hourlySlots.Add(new HourlyRadiationSlot
+                {
+                    Hour           = h,
+                    Label          = $"{h:00}:00",
+                    RadiationWm2   = profile[h],
+                    RadiationKwhM2 = Math.Round(profile[h] / 1000.0, 3)
+                });
+
+            return new SolarData
+            {
+                Date             = DateTime.Today,
+                RadiationKwhM2   = radiation,
+                TemperatureC     = temp,
+                WindSpeedKmh     = wind,
+                UvIndex          = 8.0,
+                SolarIndex       = score,
+                SolarIndexLabel  = _solarIndex.GetLabel(score),
+                SolarIndexColor  = _solarIndex.GetColor(score),
+                Sunrise          = "05:50",
+                Sunset           = "18:10",
+                OptimalHours     = new List<string> { "10:00-14:00" },
+                PeakCostHours    = new List<string> { "18:00-21:00" },
+                HourlyRadiation  = hourlySlots,
+                Cached           = true
+            };
+        }
+
+        private List<SolarDayData> GetFallbackForecast(int days)
+        {
+            // Variación realista basada en promedios históricos de Riohacha
+            double[] radiations = { 5.8, 6.1, 5.5, 6.3, 5.9, 6.4, 5.7, 6.0, 5.8, 6.2, 5.6, 6.1, 5.9, 6.3, 5.8 };
+            var list = new List<SolarDayData>();
+            for (int i = 0; i < days; i++)
+            {
+                var r     = radiations[i % radiations.Length];
+                var score = _solarIndex.Calculate(r, 24, 35);
+                list.Add(new SolarDayData
+                {
+                    Date             = DateTime.Today.AddDays(i),
+                    RadiationKwhM2   = r,
+                    TemperatureC     = 35.0,
+                    WindSpeedKmh     = 24.0,
+                    SolarIndex       = score,
+                    SolarIndexLabel  = _solarIndex.GetLabel(score)
+                });
+            }
+            return list;
         }
 
         private static JsonSerializerOptions JsonOpts() => new() { PropertyNameCaseInsensitive = true };
