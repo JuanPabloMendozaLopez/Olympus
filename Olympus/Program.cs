@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Servicios de la app
 builder.Services.AddSingleton<SolarIndexService>();
+builder.Services.AddSingleton<BlackoutHistoryService>();
 builder.Services.AddScoped<SolarService>();
 builder.Services.AddScoped<AiService>();
 
